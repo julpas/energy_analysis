@@ -1,0 +1,221 @@
+---
+title: "Analysis of energy consumption"
+author: "Julie Pasichnyk"
+date: "22/10/2017"
+output: 
+  html_document:
+    highlight: default
+    number_sections: yes
+    theme: cosmo
+    toc: yes
+    toc_depth: 2
+---
+
+******
+# Objectives
+******
+
+>Aim of the project is to analyze the energy consumption data of a house. Measurement of the global consumption of the house is provided by 3 sub meters that measure different zones of the house. The objective is to analyze the data, give consumption advice to the client and to deliver predictions that can generate an economic benefit to the implantation of a smart home.
+
+
+******
+# Dataset
+******
+
+>The dataset contains 47 months of energy measurements obtained between December 2006 and November 2010. The total energy consumption minus the sum of the consumption of the 3 sub meters corresponds to energy not registered by the subsystems.
+
+******
+# Attribute Information
+******
+
+>1.date: date in dd / mm / yyyy format
+>2.time: time in hh: mm format: ss
+>3.global_active_power: Active power per minute (kW)
+>4.global_reactive_power: Reactive power per minute (kW)
+>5.voltage: Voltage (V)
+>6.global_intensity: Current (A)
+>7.sub_metering_1: Energy measured in the kitchen (W \ * h)
+>8.sub_metering_2: Energy measured in the laundry room (W \ * h)
+>9.sub_metering_3: Energy measured of the heater and air conditioning (W \ * h)  
+
+******
+# Data preprocessing
+******
+
+Libraries
+
+```{r,eval=TRUE,echo=TRUE}
+library("tidyr")
+library("dplyr")
+library("taRifx")
+library("lubridate")
+library("ggplot2")
+library("splines")
+library("forecast")
+```
+
+Read data 
+
+```{r,eval=TRUE,echo=TRUE}
+Dataset <- read.table("power_filtered.csv", sep=",", header=TRUE, stringsAsFactors=FALSE)
+str(Dataset)
+```
+
+Create new column "DateTime": join time and date and place it as the first column
+
+```{r,eval=TRUE,echo=TRUE}
+Dataset <-cbind(Dataset,paste(Dataset$Date,Dataset$Time), stringsAsFactors=FALSE)
+colnames(Dataset)[10] <-"DateTime"
+Dataset <- Dataset[,c(ncol(Dataset), 1:(ncol(Dataset)-1))]
+```
+
+Define variable type for all columns
+
+```{r,eval=TRUE,echo=TRUE}
+
+Dataset$Global_active_power <- as.numeric(destring(Dataset$Global_active_power))
+Dataset$Global_reactive_power <- as.numeric(Dataset$Global_reactive_power)
+Dataset$Voltage <- as.numeric(Dataset$Voltage)
+Dataset$Global_intensity <- as.numeric(Dataset$Global_intensity)
+Dataset$Sub_metering_1 <- as.numeric(Dataset$Sub_metering_1) * 60/1000
+Dataset$Sub_metering_2 <- as.numeric(Dataset$Sub_metering_2) * 60/1000
+Dataset$Sub_metering_3 <- as.numeric(Dataset$Sub_metering_3) * 60/1000
+Dataset$DateTime <- strptime(Dataset$DateTime, "%d/%m/%Y %H:%M:%S")
+Dataset$DateTime <-as.POSIXct(Dataset$DateTime)
+Dataset$Date <- NULL
+Dataset$Time <- NULL
+str(Dataset) #Check new data format
+```
+
+******
+# Data analysis
+## Year 2009
+******
+
+```{r,eval=TRUE,echo=TRUE}
+DatasetYear <- filter(Dataset,year(Dataset$DateTime) == as.character(2009)) #Filter 2009
+#Create empty vectors to fill with data
+TotalConsumption <- vector(mode="numeric",length=0)
+AverageConsumption <- vector(mode="numeric",length=0)
+TotalSubMeter1 <- vector(mode="numeric",length=0)
+TotalSubMeter2 <- vector(mode="numeric",length=0)
+TotalSubMeter3 <- vector(mode="numeric",length=0)
+AverageSubmeters <- vector(mode="numeric",length=0)
+TotalNA <- vector(mode="numeric",length=0)
+
+for(j in 1:12){
+    
+    Month = j
+    if(exists("DatasetMonth")) rm(DatasetMonth)
+    DatasetMonth <- filter(DatasetYear, month(DatasetYear$DateTime) == Month)
+  
+    if(length(DatasetMonth$Global_active_power)>0){
+    
+      #Calculate total sum for submeters
+      TotalSum <- sum(DatasetMonth$Global_active_power,na.rm=TRUE)
+      TotalSum1 <- sum(DatasetMonth$Sub_metering_1,na.rm=TRUE)
+      TotalSum2 <- sum(DatasetMonth$Sub_metering_2,na.rm=TRUE)
+      TotalSum3 <- sum(DatasetMonth$Sub_metering_3,na.rm=TRUE)
+      TotalConsumption<-c(TotalConsumption,TotalSum)
+      TotalSubMeter1 <- c(TotalSubMeter1, TotalSum1)
+      TotalSubMeter2 <- c(TotalSubMeter2, TotalSum2)
+      TotalSubMeter3 <- c(TotalSubMeter3, TotalSum3)
+      
+      #Average consumption
+      TotalMean <- mean(DatasetMonth$Global_active_power,na.rm=TRUE)
+      SubmetersMean <- mean(DatasetMonth$Sub_metering_1 + DatasetMonth$Sub_metering_2 + 
+                              DatasetMonth$Sub_metering_3,na.rm=TRUE)
+      AverageConsumption <- c(AverageConsumption,TotalMean)
+      AverageSubmeters <- c(AverageSubmeters, SubmetersMean)
+      
+      #Number of NAs per month
+      TotalNA <- c(TotalNA, length(which(is.na(DatasetMonth$Global_active_power))))
+    }
+}
+
+#Create dataframes to make graphs 
+
+df_TotalConsumption <- as.data.frame(1:12)
+df_TotalConsumption$Power <- TotalConsumption
+df_TotalConsumption$Sub1 <- TotalSubMeter1
+df_TotalConsumption$Sub2 <- TotalSubMeter2
+df_TotalConsumption$Sub3 <- TotalSubMeter3
+df_TotalConsumption <- df_TotalConsumption %>% mutate(TotalSubmeters = TotalSubMeter1 + TotalSubMeter2 +TotalSubMeter3)
+colnames(df_TotalConsumption) <- c("Month", "Power", "Sub1", "Sub2", "Sub3", "Subs")
+
+df_AverageConsumption <- as.data.frame(1:12)
+df_AverageConsumption$Power <- AverageConsumption
+df_AverageConsumption$Submeters <- AverageSubmeters
+colnames(df_AverageConsumption) <- c("Month", "Power", "Submeters")
+
+df_NA <- as.data.frame(1:12)
+df_NA$NAs <- TotalNA
+colnames(df_NA) <- c("Month", "NAs")
+```
+
+******
+## Results
+******
+
+
+```{r,eval=TRUE,echo=TRUE}
+ggplot() + geom_line(data = df_TotalConsumption, aes(x=Month, y = Power)) +
+  geom_line(data = df_TotalConsumption, aes(x=Month, y = Subs), linetype = 2) +
+  ggtitle("Total Global Consumption 2009")+
+  xlab("Month") + ylab("Global Power (kW)") + 
+  theme(plot.title = element_text(hjust = 0.5))
+  
+```
+
+> Figure 1: Total consumption (solid line) and consumption of the 3 submeters (dashed line). The difference between the two measures corresponds to energy consumed not registered by the submitters. 
+
+```{r,eval=TRUE,echo=TRUE}
+
+ggplot() +
+  geom_line(data = df_TotalConsumption, aes(x=Month, y = Sub1), linetype = 3) +
+  geom_line(data = df_TotalConsumption, aes(x=Month, y = Sub2), linetype = 2) +
+  geom_line(data = df_TotalConsumption, aes(x=Month, y = Sub3), linetype = 1) +
+  ggtitle("Total Global Consumption Submeter 2009")+
+  xlab("Month") + ylab("Global Power (kW)") + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+> Figure 2: Energy recorded by the different submeters in the house. We can see that Submiter 1 (dashed line) and Submiter 2 (dotted line) consum much less than Submiter 3 (solid line).
+
+```{r,eval=TRUE,echo=TRUE}
+
+ggplot() + geom_line(data = df_AverageConsumption, aes(x=Month, y = Power)) +
+  geom_line(data = df_AverageConsumption, aes(x=Month, y = Submeters), linetype = 2) +
+  xlab("Month") + ylab("Global Power (kW)")+
+  ggtitle("Average Global Consumption")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+> Figure 3: Total average consumption (solid line) and registered by submeters (dashed line). We observe in comparison with figure 1 that both consumptions have a smoother form. When making the average consumption the effects of the difference between days of the months and number of NAs of each month disappear.
+
+```{r,eval=TRUE,echo=TRUE}
+#Histogram of missing values per month
+ggplot() + geom_col(data = df_NA, aes(x=Month, y = NAs), fill = "blue") +
+  xlab("Month") + ylab("Total NAs per month")+
+  ggtitle("NAs per month in global consumption")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+> Figure 4: Number of NAs per month. Most of NAs are concentrated in the month of June.
+
+******
+# Conclusions
+
+******
+
+> In this study we analyzed the power consumption in a smart home using 3 different meters inside the house (submeters). We have made the selection of a year of consumption in order to observe the annual trend. 
+
+> We could observe that the global consumption in summer is much smaller than in the rest of the year, opposed to the maximum consumption in winter due to the heating. 
+
+> Submeter 3 responsible for 75% of the total submeter consumption, making it the clearest indicator of the overall consumption trend. The energy which was not registered by the submeters amounts to half of the total consumption.
+
+> The average consumption is a better indicator of the general trend because it eliminates particularities of each month as the number of days or the weekends. However for the global consumption it s necessary to know the total amount of energy consumed (electric bill). In this case the number of missing values in each month can affect the effectiveness of the prediction.
+
+> Using prediction or forecasting technologies and introducing temperature measurements and taking into account other factors such as holidays, we can optimize the energy consumption of a smart home or a smart office building, reducing consumption and therefore the electric bill.  
